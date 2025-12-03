@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+boto3
+requests
+numpy
+torch
+transformers
+diffusers
+accelerate
+opencv-python
