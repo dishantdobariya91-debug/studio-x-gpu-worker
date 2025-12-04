@@ -1,18 +1,12 @@
 runpod
 
-torch
-torchvision
-torchaudio
+torch==2.2.0
+torchvision==0.17.0
+torchaudio==2.2.0
 
-diffusers==0.33.1
-transformers
-accelerate
-xformers
-
-numpy
+diffusers==0.29.0
+transformers>=4.40.0
+accelerate>=0.30.0
+sentencepiece
 opencv-python
 imageio[ffmpeg]
-sentencepiece
-huggingface-hub
-safetensors
-einops
