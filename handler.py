@@ -5,14 +5,14 @@ import os
 import io
 import logging
 from diffusers import TextToVideoSDPipeline
-from diffusers.utils import export_to_video
+# We need imageio-ffmpeg to save the video, which is installed via requirements.txt
+from diffusers.utils import export_to_video 
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Model ID - using the 576w version which is the base Text-to-Video model
-# (The XL model is typically an upscaler, using 576w ensures proper generation from text)
+# Model ID
 MODEL_ID = "cerspense/zeroscope_v2_576w"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -24,17 +24,24 @@ def init_model():
     if pipe is None:
         logger.info(f"[Studio X] Loading ZeroScope v2 model: {MODEL_ID}...")
         try:
+            # 1. Use fp16 (float16) for reduced VRAM consumption
             pipe = TextToVideoSDPipeline.from_pretrained(
                 MODEL_ID,
                 torch_dtype=torch.float16
             )
             pipe.to(device)
-            # Optimizations for speed and memory
+            
+            # 2. Aggressive Memory Optimizations (Critical for stability)
+            # Moves model parts to CPU when not in use
             pipe.enable_model_cpu_offload() 
-            pipe.enable_vae_slicing()
-            logger.info("[Studio X] Model loaded successfully.")
+            # Breaks the VAE encoding/decoding process into smaller chunks
+            pipe.enable_vae_slicing() 
+            # Enables CPU offload for attention layers (The most critical VRAM saver)
+            pipe.enable_attention_slicing(1)
+            
+            logger.info("[Studio X] Model loaded successfully with optimizations.")
         except Exception as e:
-            logger.error(f"Failed to load model: {e}")
+            logger.error(f"Failed to load model during init: {e}")
             raise e
 
 def handler(job):
@@ -44,9 +51,9 @@ def handler(job):
     global pipe
     job_input = job.get("input", {})
     
-    # 1. Extract inputs
+    # 1. Extract inputs (Using reduced default frames for initial stability)
     prompt = job_input.get("prompt", "A futuristic cyberpunk city with neon lights")
-    num_frames = job_input.get("num_frames", 24) # Default 24 frames (approx 3-4 seconds depending on fps)
+    num_frames = job_input.get("num_frames", 16) # Reduced from 24 to 16 for stability
     fps = job_input.get("fps", 8)
     
     logger.info(f"[Studio X] Generating video for prompt: {prompt}")
@@ -61,7 +68,9 @@ def handler(job):
             prompt, 
             num_frames=num_frames, 
             height=320, 
-            width=576
+            width=512, # Slightly reduced width for better VRAM use
+            guidance_scale=9.0,
+            num_inference_steps=20 # Lower steps for speed and memory
         ).frames[0]
         
         logger.info("[Studio X] Video frames generated.")
@@ -72,7 +81,6 @@ def handler(job):
         logger.info(f"[Studio X] Video saved to: {output_path}")
 
         # 4. Convert to Base64 for immediate return
-        # (In production, you would upload 'output_path' to S3 here and return the URL)
         with open(output_path, "rb") as video_file:
             video_bytes = video_file.read()
             base64_video = base64.b64encode(video_bytes).decode("utf-8")
@@ -85,7 +93,10 @@ def handler(job):
             "status": "completed",
             "message": "Video generated successfully"
         }
-
+        
+    except torch.cuda.OutOfMemoryError as e:
+        logger.error(f"FATAL ERROR: CUDA Out of Memory. Please reduce frames/size. {e}")
+        return {"error": "CUDA Out of Memory. Worker crashed."}
     except Exception as e:
         logger.error(f"Error during generation: {e}")
         return {"error": str(e)}
