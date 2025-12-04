@@ -7,3 +7,10 @@ accelerate
 sentencepiece
 opencv-python
 
+runpod
+numpy
+imageio
+imageio-ffmpeg
+fastapi
+pydantic
+uvicorn
