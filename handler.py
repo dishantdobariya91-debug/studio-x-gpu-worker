@@ -1,14 +1,14 @@
 # handler.py
 #
-# RunPod Serverless worker for Studio X using ZeroScope v2 576w
-# Endpoint: /run  (RunPod standard)
+# RunPod Serverless worker for Studio X using CogVideoX.
+# Endpoint: /run
 #
-# Input JSON (from Studio X / curl):
+# Expected input JSON (from Studio X / curl):
 # {
 #   "input": {
-#     "prompt": "your text here",
-#     "duration_sec": 8,
-#     "resolution": "576p"
+#       "prompt": "your text here",
+#       "duration_sec": 8,
+#       "resolution": "720p"
 #   }
 # }
 
@@ -18,94 +18,119 @@ import time
 from typing import Any, Dict
 
 import numpy as np
-import runpod
-import torch
-from diffusers import DiffusionPipeline
 import imageio
+import runpod
 
-MODEL_ID = "cerspense/zeroscope_v2_576w"
-
-# --------------------------------------------------------------------
-# Global model load (runs once per worker start)
-# --------------------------------------------------------------------
-device = "cuda" if torch.cuda.is_available() else "cpu"
-dtype = torch.float16 if device == "cuda" else torch.float32
-
-print(f"[Studio X GPU] Loading ZeroScope model: {MODEL_ID} on {device} ...")
-pipe = DiffusionPipeline.from_pretrained(
-    MODEL_ID,
-    torch_dtype=dtype
-)
-if device == "cuda":
-    pipe.enable_model_cpu_offload()
-print("[Studio X GPU] Model loaded.")
+from model_loader import video_model
 
 
-# --------------------------------------------------------------------
-# Helper: generate video and return local path
-# --------------------------------------------------------------------
-def generate_video(prompt: str, duration_sec: int, resolution: str) -> str:
-    # duration -> frames (simple mapping)
-    # ZeroScope works well with 24–48 frames
-    num_frames = max(12, min(48, int(duration_sec * 8)))  # 8 fps baseline
+# -------------------------------------------------------------------
+# NeuroPause / NeuroChain / NeuroCloud: lightweight metadata hooks
+# -------------------------------------------------------------------
 
-    print(f"[Studio X GPU] Generating video: "
-          f"prompt='{prompt[:80]}', duration={duration_sec}s, "
-          f"frames={num_frames}, resolution={resolution}")
 
-    # Run model
-    start = time.time()
-    result = pipe(
-        prompt,
-        num_frames=num_frames
-    )
-    frames = result.frames  # List[List[PIL.Image]] or List[PIL.Image]
+def compute_neuropause_metrics(duration_sec: int) -> Dict[str, Any]:
+    """
+    Simple placeholder metrics so Studio X can display NP/NC/Cloud info.
+    These are NOT the full scientific implementation, just sane defaults.
+    """
+    # Example: assume we always achieve at least 20% jolt reduction baseline
+    jr_pct = 20.0
+    nmi = 0.08  # NeuroMotion Instability (target <= 0.1)
+    car = 0.95  # Conscious Alignment Rhythm index
 
-    if isinstance(frames[0], list):
-        frames = frames[0]
+    return {
+        "jr_pct": jr_pct,
+        "nmi": nmi,
+        "car_index": car,
+        "duration_sec": duration_sec,
+    }
 
+
+# -------------------------------------------------------------------
+# Helper: convert frames -> MP4 file
+# -------------------------------------------------------------------
+
+
+def frames_to_video(frames, duration_sec: int, resolution: str) -> str:
+    """
+    Convert a list of PIL images to an MP4 on local disk.
+    Returns the local file path.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="studiox_")
+    out_path = os.path.join(tmp_dir, "output.mp4")
+
+    # Convert PIL -> numpy
     frames_np = [np.array(f) for f in frames]
 
-    # Save to temporary mp4
-    tmp_dir = tempfile.mkdtemp(prefix="studiox_")
-    video_path = os.path.join(tmp_dir, "output.mp4")
+    # 8 fps baseline, adjusted by duration if possible
+    if duration_sec > 0:
+        fps = max(4, min(16, int(len(frames_np) / max(1, duration_sec))))
+    else:
+        fps = 8
 
-    fps = 8  # playback fps
+    print(f"[Studio X GPU] Writing video {out_path} at {fps} fps, {len(frames_np)} frames")
+
     imageio.mimwrite(
-        video_path,
+        out_path,
         frames_np,
         fps=fps,
-        codec="libx264"
+        codec="libx264",
     )
 
-    print(f"[Studio X GPU] Video generated in {time.time() - start:.1f}s "
-          f"and saved to {video_path}")
-
-    return video_path
+    return out_path
 
 
-# --------------------------------------------------------------------
+# -------------------------------------------------------------------
 # RunPod handler
-# --------------------------------------------------------------------
+# -------------------------------------------------------------------
+
+
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     """Main serverless job handler for RunPod."""
     job_input = job.get("input", {})
 
-    prompt = job_input.get("prompt", "Test video from Studio X with ZeroScope")
+    prompt = job_input.get("prompt", "Test video from Studio X with CogVideoX")
     duration_sec = int(job_input.get("duration_sec", 8))
-    resolution = job_input.get("resolution", "576p")
+    resolution = job_input.get("resolution", "720p")
+
+    print(f"[Studio X GPU] Job received with prompt='{prompt[:80]}...'")
 
     try:
-        video_path = generate_video(prompt, duration_sec, resolution)
+        start = time.time()
 
-        # For now we return local file path.
-        # Later we will upload to S3/R2 and return https URL.
+        # 1) Generate frames
+        frames = video_model.generate(prompt, duration_sec, resolution)
+
+        # 2) Convert to video
+        video_path = frames_to_video(frames, duration_sec, resolution)
+
+        elapsed = time.time() - start
+        print(f"[Studio X GPU] Job completed in {elapsed:.1f}s, video at {video_path}")
+
+        # 3) NeuroPause / Chain / Cloud summary
+        np_metrics = compute_neuropause_metrics(duration_sec)
+
+        # NOTE: For now we return a local path.
+        # Later you can upload to S3/Cloudflare and return a public URL.
         return {
             "status": "completed",
             "video_path": video_path,
-            "model_version": MODEL_ID,
+            "model_id": "THUDM/CogVideoX-2b",
             "duration_sec": duration_sec,
             "resolution": resolution,
+            "latency_sec": round(elapsed, 2),
+            "neuro": {
+                "neuropause": np_metrics,
+                "neurochain": {
+                    "frame_count": len(frames),
+                    "fps_estimate": len(frames) / max(1, duration_sec),
+                },
+                "neurocloud": {
+                    "worker_type": "runpod_serverless",
+                    "gpu": os.environ.get("RUNPOD_GPU_NAME", "unknown"),
+                },
+            },
         }
 
     except Exception as e:
@@ -119,3 +144,4 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 if __name__ == "__main__":
     print("[Studio X GPU] Starting RunPod serverless worker...")
     runpod.serverless.start({"handler": handler})
+
