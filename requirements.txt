@@ -1,9 +1,9 @@
-runpod
-torch==2.2.0
-torchvision==0.17.0
-xformers==0.0.24
-accelerate
+torch
+torchvision
+torchaudio
 diffusers
 transformers
-numpy
-imageio[ffmpeg]
+accelerate
+sentencepiece
+opencv-python
+
