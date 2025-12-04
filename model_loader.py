@@ -1,30 +1,56 @@
 import torch
 from diffusers import CogVideoXPipeline
 
+
 class CogVideoModel:
+    """
+    Minimal wrapper around CogVideoX for Studio X.
+    Returns a list of frames (PIL Images).
+    """
+
     def __init__(self):
-        print("Loading CogVideoX-2B (Text-to-Video)…")
+        model_id = "THUDM/CogVideoX-2b"
+
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.dtype = torch.float16 if self.device == "cuda" else torch.float32
+
+        print(f"[Studio X GPU] Loading CogVideoX model {model_id} on {self.device} ...")
+
         self.pipe = CogVideoXPipeline.from_pretrained(
-            "THUDM/CogVideoX-2B",
-            torch_dtype=torch.float16
-        ).to("cuda")
-        print("Model ready.")
-
-    def generate(self, prompt: str, duration_sec: int, resolution: str):
-        print(f"Generating video for: {prompt}")
-
-        output = self.pipe(
-            prompt=prompt,
-            num_frames=49,         # ≈2 seconds
-            guidance_scale=6.0
+            model_id,
+            torch_dtype=self.dtype,
         )
 
-        video = output.frames[0]
+        self.pipe.to(self.device)
+        self.pipe.enable_model_cpu_offload() if self.device == "cuda" else None
 
-        out_path = "/tmp/output.mp4"
-        video.save(out_path)
+        print("[Studio X GPU] CogVideoX model ready.")
 
-        return out_path
+    def generate(self, prompt: str, duration_sec: int, resolution: str):
+        """
+        Generate frames for a prompt.
 
+        Returns:
+            List[PIL.Image.Image] frames
+        """
+        # Simple mapping: ~8 fps, cap at 64 frames
+        num_frames = max(16, min(64, duration_sec * 8))
+
+        print(
+            f"[Studio X GPU] Generating video: "
+            f"prompt='{prompt[:80]}...', duration={duration_sec}s, frames={num_frames}, res={resolution}"
+        )
+
+        out = self.pipe(
+            prompt=prompt,
+            num_frames=num_frames,
+        )
+
+        # diffusers CogVideoX: out.frames[0] is list of PIL images
+        frames = out.frames[0]
+        return frames
+
+
+# Global singleton model (loaded once per worker)
 video_model = CogVideoModel()
 
