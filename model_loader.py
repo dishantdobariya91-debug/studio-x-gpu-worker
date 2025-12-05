@@ -1,46 +1,25 @@
+# model_loader.py - Load CogVideoX 1.5-5B and Stable Video Diffusion XT pipelines
 import torch
 from diffusers import CogVideoXPipeline, StableVideoDiffusionPipeline
-import time
 
+def load_models():
+    """Load both pipelines onto CUDA (with optimizations)."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-DEVICE = "cuda"
+    # Load CogVideoX 1.5 (5B) in BF16 precision:contentReference[oaicite:10]{index=10}
+    cog_pipe = CogVideoXPipeline.from_pretrained(
+        "zai-org/CogVideoX1.5-5B", torch_dtype=torch.bfloat16
+    )
+    cog_pipe.to(device)
+    # Offload parts to CPU to save VRAM
+    cog_pipe.enable_model_cpu_offload()
 
+    # Load Stable Video Diffusion XT (image-to-video) in FP16 (variant="fp16")
+    svd_pipe = StableVideoDiffusionPipeline.from_pretrained(
+        "stabilityai/stable-video-diffusion-img2vid-xt", 
+        torch_dtype=torch.float16, variant="fp16"
+    )
+    svd_pipe.to(device)
+    svd_pipe.enable_model_cpu_offload()  # enable CPU offload for memory
 
-class CogVideoXWrapper:
-    def __init__(self):
-        print("[CogVideoX] Loading model...")
-        self.pipe = CogVideoXPipeline.from_pretrained(
-            "THUDM/CogVideoX-1.5",
-            torch_dtype=torch.float16
-        ).to(DEVICE)
-        print("[CogVideoX] Ready.")
-
-    def generate(self, prompt, duration_sec, resolution):
-        print("[CogVideoX] Generating video...")
-        frames = self.pipe(prompt, num_frames=duration_sec * 8).frames
-        # Save MP4 output
-        out = "cog_output.mp4"
-        self.pipe.save_video(frames, out)
-        return out
-
-
-class SVDXTWrapper:
-    def __init__(self):
-        print("[SVD-XT] Loading model...")
-        self.pipe = StableVideoDiffusionPipeline.from_pretrained(
-            "stabilityai/stable-video-diffusion-img2vid-xt",
-            torch_dtype=torch.float16
-        ).to(DEVICE)
-        print("[SVD-XT] Ready.")
-
-    def generate(self, prompt, duration_sec, resolution):
-        print("[SVD-XT] Generating video...")
-        frames = self.pipe(prompt, num_frames=duration_sec * 8).frames
-        out = "svd_output.mp4"
-        self.pipe.save_video(frames, out)
-        return out
-
-
-# Load both models once per worker
-cog_model = CogVideoXWrapper()
-svd_model = SVDXTWrapper()
+    return cog_pipe, svd_pipe
