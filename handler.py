@@ -1,47 +1,47 @@
-# model_loader.py
-import torch
-from diffusers import DiffusionPipeline
+# handler.py
+import runpod
+from inference import generate_video
 
-class TextToVideoModel:
-    def __init__(self):
-        print("[Studio X GPU] Loading ModelScope Text-to-Video 1.7B...")
-        # Model: open-source text-to-video, works on 24GB GPUs
-        self.pipe = DiffusionPipeline.from_pretrained(
-            "damo-vilab/text-to-video-ms-1.7b",
-            torch_dtype=torch.float16,
-            variant="fp16"
-        ).to("cuda")
-        self.pipe.enable_model_cpu_offload()
-        print("[Studio X GPU] Model loaded and ready.")
+def handler(event):
+    """
+    RunPod serverless handler.
+    Expects:
+    {
+      "input": {
+        "prompt": "text...",
+        "duration_sec": 5,
+        "resolution": "720p"
+      }
+    }
+    """
 
-    def generate(self, prompt: str, duration_sec: int = 4, resolution: str = "576p") -> str:
-        """
-        Generate a short video from text prompt.
-        ModelScope usually outputs ~16 frames; we keep it simple and let
-        the model decide length; duration_sec is just for your UI.
-        """
+    input_data = event.get("input", {}) or {}
 
-        print(f"[Studio X GPU] Generating video for prompt: {prompt}")
-        # The ModelScope pipeline uses num_frames, we’ll keep default ~16
-        output = self.pipe(prompt=prompt)
+    prompt = input_data.get("prompt", "a simple test video")
+    duration_sec = int(input_data.get("duration_sec", 4))
+    resolution = input_data.get("resolution", "576p")
 
-        frames = output.frames[0]  # list of PIL images
+    try:
+        video_path = generate_video(
+            prompt=prompt,
+            duration_sec=duration_sec,
+            resolution=resolution
+        )
 
-        # Save video to /tmp/output.mp4
-        import imageio
-        import os
+        return {
+            "status": "completed",
+            "video_path": video_path,  # local path for now
+            "prompt": prompt,
+            "duration_sec": duration_sec,
+            "resolution": resolution
+        }
 
-        os.makedirs("/tmp", exist_ok=True)
-        output_path = "/tmp/output.mp4"
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "prompt": prompt
+        }
 
-        # 8 fps → ~2 seconds. You can tune fps.
-        imageio.mimsave(output_path, frames, fps=8)
-
-        print(f"[Studio X GPU] Video saved to {output_path}")
-        # For now we just return the local path; later you’ll upload to R2/S3
-        return output_path
-
-
-# Global singleton instance
-video_model = TextToVideoModel()
-
+# Start RunPod serverless handler
+runpod.serverless.start({"handler": handler})
