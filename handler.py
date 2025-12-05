@@ -1,61 +1,55 @@
-# handler.py - Main RunPod serverless handler using FastAPI-like server
+# handler.py
 import runpod
-import torch
-import requests
-from io import BytesIO
-from PIL import Image
+from model_loader import get_pipeline
 from diffusers.utils import export_to_video
-from model_loader import load_models  # helper to load pipelines
-
-# Load both pipelines once at startup
-cog_pipe, svd_pipe = load_models()
+import torch
 
 def handler(job):
     """
-    RunPod handler function. Expects job["input"] to have either 'prompt' or 'image_url'.
-    Returns {"video_path": <local_mp4_path>} or error.
+    RunPod serverless handler. Expects job["input"] with keys:
+      - "prompt": text prompt (string)
+      - "model": either "CogVideoX" or "SVD-XT"
+    Returns a dict; here we save the video to 'output.mp4' and return its path.
     """
     job_input = job.get("input", {})
-    prompt = job_input.get("prompt")
-    image_url = job_input.get("image_url")
+    prompt = job_input.get("prompt", "")
+    model_name = job_input.get("model", "CogVideoX")
+    
+    if not prompt:
+        return {"error": "No prompt provided."}
 
-    output_path = "/workspace/output.mp4"
+    try:
+        pipeline = get_pipeline(model_name)
+    except ValueError as e:
+        return {"error": str(e)}
 
-    # Text-to-Video with CogVideoX
-    if prompt:
-        # Generate video frames from prompt (CogVideoX in BF16):contentReference[oaicite:5]{index=5}
-        result = cog_pipe(prompt=prompt, num_inference_steps=50)  # use default height/width
-        frames = result.frames  # Tensor of shape [batch, frames, C, H, W]
-        # Move to CPU and convert to numpy list of frames
-        frames = frames[0].cpu().numpy()  # shape: [num_frames, C, H, W]
-        # Convert to list of HxWxC uint8 images
-        frames = [((frame.transpose(1, 2, 0) * 255).clip(0,255).astype('uint8')) for frame in frames]
-        # Export to MP4 (fps=8 for CogVideoX):contentReference[oaicite:6]{index=6}
-        export_to_video(frames, output_path, fps=8)
-        return {"video_path": output_path}
-
-    # Image-to-Video with Stable Video Diffusion XT
-    elif image_url:
-        # Download and load the image
-        response = requests.get(image_url)
-        if response.status_code != 200:
-            return {"error": f"Failed to download image from URL: {image_url}"}
-        image = Image.open(BytesIO(response.content)).convert("RGB")
-        # Resize image to 1024x576 (width x height) as recommended:contentReference[oaicite:7]{index=7}
-        image = image.resize((1024, 576))
-        # Generate video frames from image (SVD-XT):contentReference[oaicite:8]{index=8}
-        result = svd_pipe(image, decode_chunk_size=8)  # use default num_frames=25
-        frames = result.frames[0]  # list of PIL Images or numpy frames
-        # If frames are tensors, convert to numpy as above
-        if isinstance(frames[0], torch.Tensor):
-            frames = [((frame.cpu().numpy().transpose(1, 2, 0) * 255).clip(0,255).astype('uint8')) 
-                      for frame in frames]
-        # Export to MP4 (fps=7 for SVD-XT):contentReference[oaicite:9]{index=9}
-        export_to_video(frames, output_path, fps=7)
-        return {"video_path": output_path}
-
+    # Generate video frames
+    if model_name == "CogVideoX":
+        # Text-to-video generation
+        result = pipeline(
+            prompt=prompt,
+            num_inference_steps=30,  # adjust for quality/speed trade-off
+            guidance_scale=6.0
+        )
+        frames = result.frames[0]  # CogVideoX returns .frames list
     else:
-        return {"error": "Please provide either a 'prompt' or an 'image_url' in the input."}
+        # SVD-XT normally requires an image. Generate a conditioning image from text.
+        sd_pipe = StableDiffusionPipeline.from_pretrained(
+            "runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16
+        ).to("cuda")
+        with torch.autocast("cuda"):
+            image = sd_pipe(prompt).images[0]
+        # Run image-to-video pipeline
+        result = pipeline(
+            image, 
+            decode_chunk_size=8
+        )
+        frames = result.frames[0]
 
-# Start the RunPod serverless worker with this handler
-runpod.serverless.start({"handler": handler})
+    # Export frames to a video file (MP4, 16 fps)
+    export_to_video(frames, "output.mp4", fps=16)
+    return {"video_path": "output.mp4"}
+
+if __name__ == "__main__":
+    # Start the RunPod serverless handler (listens on /run)
+    runpod.serverless.start({"handler": handler})
