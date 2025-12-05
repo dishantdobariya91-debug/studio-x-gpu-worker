@@ -1,39 +1,52 @@
-from fastapi import FastAPI
+# main.py
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
-import time
-from model_loader import video_model
+from model_loader import get_pipeline
+from diffusers.utils import export_to_video
+from diffusers import StableDiffusionPipeline
+import torch
 
 app = FastAPI()
 
-class GenerateRequest(BaseModel):
+class RenderRequest(BaseModel):
     prompt: str
-    duration_sec: int = 10
-    resolution: str = "720p"
-
-class GenerateResponse(BaseModel):
-    status: str
-    video_url: str
-    model_version: Optional[str] = None
-    duration_sec: int
-    resolution: str
+    model: str  # "CogVideoX" or "SVD-XT"
 
 @app.get("/health")
-def health():
-    return {"status": "ok", "time": time.time()}
+def health_check():
+    """
+    Health check endpoint. Returns OK if the service is running.
+    """
+    return {"status": "ok"}
 
-@app.post("/generate", response_model=GenerateResponse)
-def generate(req: GenerateRequest):
-    video_url = video_model.generate(
-        prompt=req.prompt,
-        duration_sec=req.duration_sec,
-        resolution=req.resolution,
-    )
+@app.post("/video/render")
+def render_video(req: RenderRequest):
+    """
+    Accepts JSON {prompt: str, model: str} and generates a video.
+    Returns JSON with video path or error message.
+    """
+    prompt = req.prompt
+    model_name = req.model
 
-    return GenerateResponse(
-        status="completed",
-        video_url=video_url,
-        model_version="studio-x-gpu",
-        duration_sec=req.duration_sec,
-        resolution=req.resolution,
-    )
+    try:
+        pipeline = get_pipeline(model_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Generate video frames similarly to handler.py
+    if model_name == "CogVideoX":
+        result = pipeline(prompt=prompt, guidance_scale=6.0, num_inference_steps=30)
+        frames = result.frames[0]
+    else:
+        # Generate image for SVD-XT
+        sd_pipe = StableDiffusionPipeline.from_pretrained(
+            "runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16
+        ).to("cuda")
+        with torch.autocast("cuda"):
+            image = sd_pipe(prompt).images[0]
+        result = pipeline(image, decode_chunk_size=8)
+        frames = result.frames[0]
+
+    export_to_video(frames, "output.mp4", fps=16)
+    return {"video_path": "output.mp4"}
+
