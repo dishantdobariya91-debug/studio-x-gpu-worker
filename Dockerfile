@@ -1,19 +1,12 @@
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
-
-# Basic deps
-RUN apt-get update && apt-get install -y \
-    python3 python3-pip ffmpeg git && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+FROM runpod/base:0.3.1-cuda11.8
 
 WORKDIR /app
 
-# Python deps
-COPY requirements.txt .
-RUN python3 -m pip install --upgrade pip
-RUN python3 -m pip install -r requirements.txt
+RUN apt-get update && apt-get install -y ffmpeg
 
-# Copy code
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
 COPY . .
 
-# RunPod serverless entrypoint
-CMD ["python3", "handler.py"]
+CMD ["python3", "-u", "handler.py"]
