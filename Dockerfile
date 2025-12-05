@@ -1,17 +1,23 @@
-# Dockerfile - CUDA-enabled container with PyTorch and necessary libs
+# Dockerfile
 FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-runtime
 
-WORKDIR /workspace
+# Set working directory
+WORKDIR /app
 
-# Copy and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install system dependencies (e.g., ffmpeg)
+RUN apt-get update && \
+    apt-get install -y ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install ffmpeg for video encoding
-RUN apt-get update && apt-get install -y ffmpeg
+# Copy code
+COPY . /app
 
-# Copy application code
-COPY handler.py model_loader.py ./
+# Install Python dependencies
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
 
-# Launch the handler on container start
-CMD ["python", "handler.py"]
+# Expose port for FastAPI (if using main.py)
+EXPOSE 8000
+
+# Command to run FastAPI server; for RunPod worker you might use handler mode instead
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
