@@ -1,108 +1,47 @@
-import runpod
+# model_loader.py
 import torch
-import base64
-import os
-import io
-import logging
-from diffusers import TextToVideoSDPipeline
-# We need imageio-ffmpeg to save the video, which is installed via requirements.txt
-from diffusers.utils import export_to_video 
+from diffusers import DiffusionPipeline
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+class TextToVideoModel:
+    def __init__(self):
+        print("[Studio X GPU] Loading ModelScope Text-to-Video 1.7B...")
+        # Model: open-source text-to-video, works on 24GB GPUs
+        self.pipe = DiffusionPipeline.from_pretrained(
+            "damo-vilab/text-to-video-ms-1.7b",
+            torch_dtype=torch.float16,
+            variant="fp16"
+        ).to("cuda")
+        self.pipe.enable_model_cpu_offload()
+        print("[Studio X GPU] Model loaded and ready.")
 
-# Model ID
-MODEL_ID = "cerspense/zeroscope_v2_576w"
-device = "cuda" if torch.cuda.is_available() else "cpu"
+    def generate(self, prompt: str, duration_sec: int = 4, resolution: str = "576p") -> str:
+        """
+        Generate a short video from text prompt.
+        ModelScope usually outputs ~16 frames; we keep it simple and let
+        the model decide length; duration_sec is just for your UI.
+        """
 
-pipe = None
+        print(f"[Studio X GPU] Generating video for prompt: {prompt}")
+        # The ModelScope pipeline uses num_frames, we’ll keep default ~16
+        output = self.pipe(prompt=prompt)
 
-def init_model():
-    """Load the model into memory only once when the worker starts."""
-    global pipe
-    if pipe is None:
-        logger.info(f"[Studio X] Loading ZeroScope v2 model: {MODEL_ID}...")
-        try:
-            # 1. Use fp16 (float16) for reduced VRAM consumption
-            pipe = TextToVideoSDPipeline.from_pretrained(
-                MODEL_ID,
-                torch_dtype=torch.float16
-            )
-            pipe.to(device)
-            
-            # 2. Aggressive Memory Optimizations (Critical for stability)
-            # Moves model parts to CPU when not in use
-            pipe.enable_model_cpu_offload() 
-            # Breaks the VAE encoding/decoding process into smaller chunks
-            pipe.enable_vae_slicing() 
-            # Enables CPU offload for attention layers (The most critical VRAM saver)
-            pipe.enable_attention_slicing(1)
-            
-            logger.info("[Studio X] Model loaded successfully with optimizations.")
-        except Exception as e:
-            logger.error(f"Failed to load model during init: {e}")
-            raise e
+        frames = output.frames[0]  # list of PIL images
 
-def handler(job):
-    """
-    RunPod Handler Function
-    """
-    global pipe
-    job_input = job.get("input", {})
-    
-    # 1. Extract inputs (Using reduced default frames for initial stability)
-    prompt = job_input.get("prompt", "A futuristic cyberpunk city with neon lights")
-    num_frames = job_input.get("num_frames", 16) # Reduced from 24 to 16 for stability
-    fps = job_input.get("fps", 8)
-    
-    logger.info(f"[Studio X] Generating video for prompt: {prompt}")
+        # Save video to /tmp/output.mp4
+        import imageio
+        import os
 
-    # 2. Generate Video
-    # Ensure model is initialized
-    if pipe is None:
-        init_model()
-        
-    try:
-        video_frames = pipe(
-            prompt, 
-            num_frames=num_frames, 
-            height=320, 
-            width=512, # Slightly reduced width for better VRAM use
-            guidance_scale=9.0,
-            num_inference_steps=20 # Lower steps for speed and memory
-        ).frames[0]
-        
-        logger.info("[Studio X] Video frames generated.")
+        os.makedirs("/tmp", exist_ok=True)
+        output_path = "/tmp/output.mp4"
 
-        # 3. Export to video file (temporary path)
-        output_path = "/tmp/output_video.mp4"
-        export_to_video(video_frames, output_path, fps=fps)
-        logger.info(f"[Studio X] Video saved to: {output_path}")
+        # 8 fps → ~2 seconds. You can tune fps.
+        imageio.mimsave(output_path, frames, fps=8)
 
-        # 4. Convert to Base64 for immediate return
-        with open(output_path, "rb") as video_file:
-            video_bytes = video_file.read()
-            base64_video = base64.b64encode(video_bytes).decode("utf-8")
-        
-        # Create a Data URI
-        video_url = f"data:video/mp4;base64,{base64_video}"
+        print(f"[Studio X GPU] Video saved to {output_path}")
+        # For now we just return the local path; later you’ll upload to R2/S3
+        return output_path
 
-        return {
-            "video_url": video_url,
-            "status": "completed",
-            "message": "Video generated successfully"
-        }
-        
-    except torch.cuda.OutOfMemoryError as e:
-        logger.error(f"FATAL ERROR: CUDA Out of Memory. Please reduce frames/size. {e}")
-        return {"error": "CUDA Out of Memory. Worker crashed."}
-    except Exception as e:
-        logger.error(f"Error during generation: {e}")
-        return {"error": str(e)}
 
-# Initialize model immediately to cache it if running purely as script
-if __name__ == "__main__":
-    init_model()
-    # Start the handler
-    runpod.serverless.start({"handler": handler})
+# Global singleton instance
+video_model = TextToVideoModel()
+
