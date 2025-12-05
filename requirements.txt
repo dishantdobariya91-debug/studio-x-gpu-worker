@@ -1,10 +1,9 @@
-torch>=2.0
-diffusers
+torch>=2.0.0+cu117
+diffusers>=0.35.0
 transformers
 accelerate
+SwissArmyTransformer>=0.4.12
 safetensors
+imageio-ffmpeg
 fastapi
 uvicorn
-pydantic
-runpod
-ffmpeg-python
