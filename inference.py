@@ -1,10 +1,8 @@
-# inference.py
 from model_loader import video_model
 
-def generate_video(prompt: str, duration_sec: int = 4, resolution: str = "576p") -> str:
+def generate_video(prompt, duration_sec, resolution):
     """
-    Wrapper called by handler.py.
-    Returns a local path to the generated video file (e.g., /tmp/output.mp4).
+    Wrapper to call the loaded model.
     """
     return video_model.generate(
         prompt=prompt,
