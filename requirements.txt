@@ -1,13 +1,8 @@
 torch==2.1.2
 torchvision==0.16.2
-accelerate==0.23.0
-transformers==4.36.2
-diffusers==0.25.0
-safetensors
+diffusers==0.27.2
+transformers==4.37.0
+accelerate
 einops
-numpy
-pillow
-imageio
-imageio-ffmpeg
-opencv-python
+imageio[ffmpeg]
 runpod
