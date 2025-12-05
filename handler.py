@@ -1,15 +1,8 @@
 import runpod
-from model_loader import video_model
+from inference import generate_video
 
 
-# -------------------------------------------------------------
-# RunPod Serverless Handler
-# -------------------------------------------------------------
-# This function is executed every time a job is sent to:
-# POST https://api.runpod.ai/v2/YOUR-ENDPOINT-ID/run
-# -------------------------------------------------------------
-
-def generate(event):
+def handler(event):
     """
     event = {
         "input": {
@@ -26,8 +19,7 @@ def generate(event):
         duration = input_data.get("duration_sec", 5)
         resolution = input_data.get("resolution", "720p")
 
-        # Run your video model
-        video_url = video_model.generate(
+        video_url = generate_video(
             prompt=prompt,
             duration_sec=duration,
             resolution=resolution
@@ -47,7 +39,4 @@ def generate(event):
         }
 
 
-# -------------------------------------------------------------
-# Start RunPod Serverless Worker
-# -------------------------------------------------------------
-runpod.serverless.start({"handler": generate})
+runpod.serverless.start({"handler": handler})
