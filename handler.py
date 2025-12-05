@@ -1,39 +1,34 @@
 # handler.py
-import runpod
-from inference import generate_video
+import time
+from model_loader import video_model
 
 def handler(event):
-    """
-    RunPod serverless handler.
-    Expects:
-    {
-      "input": {
-        "prompt": "text...",
-        "duration_sec": 5,
-        "resolution": "720p"
-      }
+    """RunPod entrypoint"""
+
+    inp = event.get("input", {})
+
+    prompt = inp.get("prompt", "")
+    duration = inp.get("duration_sec", 4)
+    resolution = inp.get("resolution", "720p")
+
+    # Run the model
+    video_url = video_model.generate(
+        prompt=prompt,
+        duration_sec=duration,
+        resolution=resolution
+    )
+
+    return {
+        "status": "completed",
+        "video_url": video_url,
+        "duration_sec": duration,
+        "resolution": resolution
     }
-    """
 
-    input_data = event.get("input", {}) or {}
-
-    prompt = input_data.get("prompt", "a simple test video")
-    duration_sec = int(input_data.get("duration_sec", 4))
-    resolution = input_data.get("resolution", "576p")
-
-    try:
-        video_path = generate_video(
-            prompt=prompt,
-            duration_sec=duration_sec,
-            resolution=resolution
-        )
-
-        return {
-            "status": "completed",
-            "video_path": video_path,  # local path for now
-            "prompt": prompt,
-            "duration_sec": duration_sec,
-            "resolution": resolution
+# REQUIRED
+from runpod.serverless import serverless_handle
+serverless_handle(handler)
+     "resolution": resolution
         }
 
     except Exception as e:
