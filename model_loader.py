@@ -1,56 +1,46 @@
+# model_loader.py
 import torch
-from diffusers import CogVideoXPipeline
+from diffusers import DiffusionPipeline
 
-
-class CogVideoModel:
-    """
-    Minimal wrapper around CogVideoX for Studio X.
-    Returns a list of frames (PIL Images).
-    """
-
+class TextToVideoModel:
     def __init__(self):
-        model_id = "THUDM/CogVideoX-2b"
+        print("[Studio X GPU] Loading ModelScope Text-to-Video 1.7B...")
+        # Model: open-source text-to-video, works on 24GB GPUs
+        self.pipe = DiffusionPipeline.from_pretrained(
+            "damo-vilab/text-to-video-ms-1.7b",
+            torch_dtype=torch.float16,
+            variant="fp16"
+        ).to("cuda")
+        self.pipe.enable_model_cpu_offload()
+        print("[Studio X GPU] Model loaded and ready.")
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.dtype = torch.float16 if self.device == "cuda" else torch.float32
-
-        print(f"[Studio X GPU] Loading CogVideoX model {model_id} on {self.device} ...")
-
-        self.pipe = CogVideoXPipeline.from_pretrained(
-            model_id,
-            torch_dtype=self.dtype,
-        )
-
-        self.pipe.to(self.device)
-        self.pipe.enable_model_cpu_offload() if self.device == "cuda" else None
-
-        print("[Studio X GPU] CogVideoX model ready.")
-
-    def generate(self, prompt: str, duration_sec: int, resolution: str):
+    def generate(self, prompt: str, duration_sec: int = 4, resolution: str = "576p") -> str:
         """
-        Generate frames for a prompt.
-
-        Returns:
-            List[PIL.Image.Image] frames
+        Generate a short video from text prompt.
+        ModelScope usually outputs ~16 frames; we keep it simple and let
+        the model decide length; duration_sec is just for your UI.
         """
-        # Simple mapping: ~8 fps, cap at 64 frames
-        num_frames = max(16, min(64, duration_sec * 8))
 
-        print(
-            f"[Studio X GPU] Generating video: "
-            f"prompt='{prompt[:80]}...', duration={duration_sec}s, frames={num_frames}, res={resolution}"
-        )
+        print(f"[Studio X GPU] Generating video for prompt: {prompt}")
+        # The ModelScope pipeline uses num_frames, we’ll keep default ~16
+        output = self.pipe(prompt=prompt)
 
-        out = self.pipe(
-            prompt=prompt,
-            num_frames=num_frames,
-        )
+        frames = output.frames[0]  # list of PIL images
 
-        # diffusers CogVideoX: out.frames[0] is list of PIL images
-        frames = out.frames[0]
-        return frames
+        # Save video to /tmp/output.mp4
+        import imageio
+        import os
+
+        os.makedirs("/tmp", exist_ok=True)
+        output_path = "/tmp/output.mp4"
+
+        # 8 fps → ~2 seconds. You can tune fps.
+        imageio.mimsave(output_path, frames, fps=8)
+
+        print(f"[Studio X GPU] Video saved to {output_path}")
+        # For now we just return the local path; later you’ll upload to R2/S3
+        return output_path
 
 
-# Global singleton model (loaded once per worker)
-video_model = CogVideoModel()
-
+# Global singleton instance
+video_model = TextToVideoModel()
