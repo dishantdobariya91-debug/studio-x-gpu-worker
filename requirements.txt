@@ -1,9 +1,9 @@
-torch>=2.0.0+cu117
-diffusers>=0.35.0
+torch>=2.0.0
+diffusers
 transformers
 accelerate
-SwissArmyTransformer>=0.4.12
+huggingface_hub
 safetensors
+pillow
 imageio-ffmpeg
-fastapi
-uvicorn
+runpod
