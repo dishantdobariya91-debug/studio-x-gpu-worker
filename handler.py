@@ -1,42 +1,53 @@
-# handler.py
-import time
+import runpod
 from model_loader import video_model
 
-def handler(event):
-    """RunPod entrypoint"""
 
-    inp = event.get("input", {})
+# -------------------------------------------------------------
+# RunPod Serverless Handler
+# -------------------------------------------------------------
+# This function is executed every time a job is sent to:
+# POST https://api.runpod.ai/v2/YOUR-ENDPOINT-ID/run
+# -------------------------------------------------------------
 
-    prompt = inp.get("prompt", "")
-    duration = inp.get("duration_sec", 4)
-    resolution = inp.get("resolution", "720p")
-
-    # Run the model
-    video_url = video_model.generate(
-        prompt=prompt,
-        duration_sec=duration,
-        resolution=resolution
-    )
-
-    return {
-        "status": "completed",
-        "video_url": video_url,
-        "duration_sec": duration,
-        "resolution": resolution
+def generate(event):
+    """
+    event = {
+        "input": {
+            "prompt": "...",
+            "duration_sec": 5,
+            "resolution": "720p"
+        }
     }
+    """
+    try:
+        input_data = event.get("input", {})
 
-# REQUIRED
-from runpod.serverless import serverless_handle
-serverless_handle(handler)
-     "resolution": resolution
+        prompt = input_data.get("prompt", "A beautiful cinematic scene")
+        duration = input_data.get("duration_sec", 5)
+        resolution = input_data.get("resolution", "720p")
+
+        # Run your video model
+        video_url = video_model.generate(
+            prompt=prompt,
+            duration_sec=duration,
+            resolution=resolution
+        )
+
+        return {
+            "status": "success",
+            "video_url": video_url,
+            "duration_sec": duration,
+            "resolution": resolution
         }
 
     except Exception as e:
         return {
             "status": "error",
-            "error": str(e),
-            "prompt": prompt
+            "message": str(e)
         }
 
-# Start RunPod serverless handler
-runpod.serverless.start({"handler": handler})
+
+# -------------------------------------------------------------
+# Start RunPod Serverless Worker
+# -------------------------------------------------------------
+runpod.serverless.start({"handler": generate})
