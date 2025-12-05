@@ -1,25 +1,38 @@
-# model_loader.py - Load CogVideoX 1.5-5B and Stable Video Diffusion XT pipelines
+# model_loader.py
+from diffusers import CogVideoXPipeline, StableVideoDiffusionPipeline, StableDiffusionPipeline
 import torch
-from diffusers import CogVideoXPipeline, StableVideoDiffusionPipeline
 
-def load_models():
-    """Load both pipelines onto CUDA (with optimizations)."""
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+# Dictionary to cache loaded pipelines per model name
+_pipelines = {}
 
-    # Load CogVideoX 1.5 (5B) in BF16 precision:contentReference[oaicite:10]{index=10}
-    cog_pipe = CogVideoXPipeline.from_pretrained(
-        "zai-org/CogVideoX1.5-5B", torch_dtype=torch.bfloat16
-    )
-    cog_pipe.to(device)
-    # Offload parts to CPU to save VRAM
-    cog_pipe.enable_model_cpu_offload()
+def get_pipeline(model_name: str):
+    """
+    Load and return the specified model pipeline.
+    Models:
+      - "CogVideoX": CogVideoX 1.5 text-to-video model
+      - "SVD-XT": Stable Video Diffusion XT image-to-video model
+    The pipelines are cached to ensure one-time initialization per worker.
+    """
+    if model_name == "CogVideoX":
+        if "CogVideoX" not in _pipelines:
+            # Load CogVideoX 1.5 text-to-video pipeline (5B parameters)
+            _pipelines["CogVideoX"] = CogVideoXPipeline.from_pretrained(
+                "THUDM/CogVideoX1.5-5B",
+                torch_dtype=torch.bfloat16
+            )
+            _pipelines["CogVideoX"].to("cuda")  # Move to GPU
+        return _pipelines["CogVideoX"]
 
-    # Load Stable Video Diffusion XT (image-to-video) in FP16 (variant="fp16")
-    svd_pipe = StableVideoDiffusionPipeline.from_pretrained(
-        "stabilityai/stable-video-diffusion-img2vid-xt", 
-        torch_dtype=torch.float16, variant="fp16"
-    )
-    svd_pipe.to(device)
-    svd_pipe.enable_model_cpu_offload()  # enable CPU offload for memory
+    elif model_name == "SVD-XT":
+        if "SVD-XT" not in _pipelines:
+            # Load Stable Video Diffusion XT (image-to-video) pipeline
+            _pipelines["SVD-XT"] = StableVideoDiffusionPipeline.from_pretrained(
+                "stabilityai/stable-video-diffusion-img2vid-xt",
+                torch_dtype=torch.float16,
+                variant="fp16"
+            )
+            _pipelines["SVD-XT"].to("cuda")
+        return _pipelines["SVD-XT"]
 
-    return cog_pipe, svd_pipe
+    else:
+        raise ValueError(f"Unsupported model '{model_name}'. Choose 'CogVideoX' or 'SVD-XT'.")
